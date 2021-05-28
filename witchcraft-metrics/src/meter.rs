@@ -23,6 +23,8 @@ const SECONDS_PER_MINUTE: f64 = 60.;
 
 struct State {
     count: i64,
+    rate_10s: Ewma,
+    rate_30s: Ewma,
     rate_1m: Ewma,
     rate_5m: Ewma,
     rate_15m: Ewma,
@@ -60,6 +62,8 @@ impl Meter {
             clock,
             state: Mutex::new(State {
                 count: 0,
+                rate_10s: Ewma::new(0.16),
+                rate_30s: Ewma::new(0.5),
                 rate_1m: Ewma::new(1.),
                 rate_5m: Ewma::new(5.),
                 rate_15m: Ewma::new(15.),
@@ -76,6 +80,18 @@ impl Meter {
     /// Returns the number of events registered by the meter.
     pub fn count(&self) -> i64 {
         self.state.lock().count + self.uncounted.load(Ordering::SeqCst)
+    }
+
+    /// Returns the ten second rolling average rate of the occurrence of events measured in events per second.
+    pub fn ten_second_rate(&self) -> f64 {
+        self.tick_if_necessary();
+        self.state.lock().rate_10s.get()
+    }
+
+    /// Returns the thirty second rolling average rate of the occurrence of events measured in events per second.
+    pub fn thirty_second_rate(&self) -> f64 {
+        self.tick_if_necessary();
+        self.state.lock().rate_30s.get()
     }
 
     /// Returns the one minute rolling average rate of the occurrence of events measured in events per second.
@@ -137,6 +153,12 @@ impl Meter {
 
         let uncounted = self.uncounted.swap(0, Ordering::SeqCst);
         state.count += uncounted;
+
+        state.rate_10s.tick(uncounted);
+        state.rate_10s.decay(required_ticks - 1);
+
+        state.rate_30s.tick(uncounted);
+        state.rate_30s.decay(required_ticks - 1);
 
         state.rate_1m.tick(uncounted);
         state.rate_1m.decay(required_ticks - 1);
